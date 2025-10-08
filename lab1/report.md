@@ -173,11 +173,11 @@ make gdb                    # 连接 GDB 会停在 0x1000
 (gdb) b *0x80200000          # 在内核入口物理地址断点
 (gdb) c                      # 继续执行，直到固件完成加载并跳转
 ```
-![硬件初始化和固件启动](labcode/lab1/imgs/1.1.png)
-![OpenSBI 初始化与内核加载](labcode/lab1/imgs/1.2.png)
-![内核启动执行](labcode/lab1/imgs/1.3.png)
-![跳转到entry.S ](labcode/lab1/imgs/1.4.png)
-![调用kern_init()](labcode/lab1/imgs/1.5.png)
+![硬件初始化和固件启动](imgs/1.1.png)
+![OpenSBI 初始化与内核加载](imgs/1.2.png)
+![内核启动执行](imgs/1.3.png)
+![跳转到entry.S ](imgs/1.4.png)
+![调用kern_init()](imgs/1.5.png)
 ## 3 观察结果摘要
 | 阶段 | 观察到的地址/现象 | 说明 |
 |------|------------------|------|
