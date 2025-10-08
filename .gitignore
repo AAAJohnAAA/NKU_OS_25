@@ -1,0 +1,54 @@
+# Build artifacts
+*.o
+*.d
+*.a
+*.so
+*.out
+*.elf
+*.map
+
+# OS/Kernel lab specific
+lab1/obj/
+lab1/bin/
+lab1/tools/
+lab1/kern/*.sym
+lab1/kern/*.asm
+lab1/ucore.img
+lab1/*.img
+lab1/*.bin
+
+lab2/obj/
+lab2/bin/
+lab2/tools/
+lab2/ucore.img
+lab2/*.img
+lab2/*.bin
+
+lab3/obj/
+lab3/bin/
+lab3/tools/
+lab3/ucore.img
+lab3/*.img
+lab3/*.bin
+
+# QEMU source tarballs
+qemu-*.tar.xz
+# QEMU build directory (if building in-tree)
+qemu-4.1.1/
+
+# Toolchain (avoid committing large toolchains)
+opt/riscv/
+
+# Editor / OS junk
+*~
+*.swp
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Python cache if any
+__pycache__/
+*.pyc
