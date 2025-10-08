@@ -155,3 +155,41 @@ ret
 
 所以这一小段汇编虽然短，却是 **内核从“裸机”到“高层初始化”的关键过渡点**。
 
+# 练习 2：GDB 跟踪 RISC-V 启动流程
+目标：跟踪从复位地址 0x1000 开始，直到内核第一条指令（`kern_entry @ 0x80200000`）执行。
+
+## 1 调试准备
+```bash
+make clean && make          # 生成 bin/kernel ucore.img
+make debug                  # QEMU (-gdb tcp::1234 -S) 挂起等待 GDB
+make gdb                    # 连接 GDB 会停在 0x1000
+```
+
+## 2 跟踪步骤
+```gdb
+# 启动后 PC=0x1000 (复位向量)
+(gdb) x/10i 0x1000           # 观察固件早期指令（OpenSBI）
+(gdb) watch *0x80200000      # 观察内核镜像写入瞬间
+(gdb) b *0x80200000          # 在内核入口物理地址断点
+(gdb) c                      # 继续执行，直到固件完成加载并跳转
+```
+![硬件初始化和固件启动](labcode/lab1/imgs/1.1.png)
+![OpenSBI 初始化与内核加载](labcode/lab1/imgs/1.2.png)
+![内核启动执行](labcode/lab1/imgs/1.3.png)
+![跳转到entry.S ](labcode/lab1/imgs/1.4.png)
+![调用kern_init()](labcode/lab1/imgs/1.5.png)
+## 3 观察结果摘要
+| 阶段 | 观察到的地址/现象 | 说明 |
+|------|------------------|------|
+| 复位 | PC=0x0000000000001000 | QEMU virt 复位向量；执行固件 ROM/OpenSBI 指令 |
+| 固件初始化 | 多条访问/设置 CSR/内存的指令 | 建立最小执行环境，准备加载内核 |
+| 内核加载 | `watch *0x80200000` 触发  | 固件将 `ucore.img` 拷贝到 DRAM 基址 + 偏移 |
+| 跳转内核 | 断点命中 0x80200000 | 开始执行 `kern_entry` 第一条指令 `la sp, bootstacktop` |
+| 进入 C | 单步执行 `tail kern_init` 后 PC 到 `kern_init` | 进入 C 初始化逻辑，清 BSS，打印信息 |
+| 死循环 | 停在 `while(1)` | 等待后续实验扩展 |
+
+## 4 回答问题
+1) RISC-V 硬件加电后最初执行的几条指令位于地址：`0x1000`（QEMU virt 的默认复位向量）。
+2) 这些早期指令（固件/OpenSBI）主要功能：设置特权级初始状态、建立必要的机器态环境、解析/准备内核镜像（或在本实验场景由 QEMU loader 直接放置）、最终跳转到内核入口地址 0x80200000。
+3) 验证方法：在 GDB 中观察 PC 初值；设置 `b *0x80200000`；可用 `watch *0x80200000` 捕获写入；断点命中后查看反汇编与符号匹配。
+
