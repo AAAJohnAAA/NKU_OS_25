@@ -194,3 +194,175 @@ static void default_init(void) {
 > **改进方向：** 可从减少外部碎片、优化查找效率、改用伙伴系统等方向进行提升。
 
 ---
+# 练习二
+## 一、设计与实现思路
+
+`Best-Fit`（最佳适配）算法的核心思想是：
+
+> 在所有空闲内存块中，选择**能够容纳请求内存且空间最小的空闲块**进行分配，从而尽量减少内存碎片。
+
+相比 `First-Fit`（首次适配）算法只找到第一个满足要求的块，`Best-Fit` 需要**遍历整个空闲链表**，找到最“合适”的块。
+
+---
+
+### （1）核心数据结构
+
+同样使用 `free_area_t` 管理空闲物理页：
+
+```c
+typedef struct {
+    list_entry_t free_list; // 空闲块链表
+    size_t nr_free;         // 当前空闲页总数
+} free_area_t;
+
+#define free_list (free_area.free_list)
+#define nr_free (free_area.nr_free)
+```
+
+链表中每个节点对应一个**连续空闲物理页块**（`Page` 结构体的起始页），其成员：
+
+* `property`：表示该空闲块的页数；
+* `page_link`：用于将页块链接到 `free_list`；
+* 标志位 `PageProperty` 用于标识该页块是否可分配。
+
+---
+
+### （2）初始化阶段：`best_fit_init` & `best_fit_init_memmap`
+
+```c
+static void best_fit_init(void) {
+    list_init(&free_list);
+    nr_free = 0;
+}
+```
+
+初始化空闲链表为空，空闲页总数清零。
+
+```c
+static void best_fit_init_memmap(struct Page *base, size_t n)
+```
+
+主要任务：
+
+1. 遍历 `base ~ base + n`，清空标志位与引用计数；
+2. 标记 `base` 为该空闲块的起始页，并设置 `property = n`；
+3. 将该页块按物理地址顺序插入到 `free_list` 中；
+4. `nr_free += n`。
+
+---
+
+### （3）页面分配：`best_fit_alloc_pages`
+
+```c
+static struct Page *best_fit_alloc_pages(size_t n)
+```
+
+实现步骤：
+
+1. 若 `n > nr_free`，返回 `NULL`；
+2. 遍历整个 `free_list`：
+
+   ```c
+   size_t min_size = nr_free + 1;
+   struct Page *page = NULL;
+
+   while ((le = list_next(le)) != &free_list) {
+       struct Page *p = le2page(le, page_link);
+       if (p->property >= n && p->property < min_size) {
+           min_size = p->property;
+           page = p;
+       }
+   }
+   ```
+
+   找出满足要求且 **最小的空闲块**；
+3. 若找到合适块 `page`：
+
+   * 从 `free_list` 中删除；
+   * 若空闲块大于所需页数，拆分剩余部分重新插入链表；
+   * 更新 `nr_free -= n`；
+   * 清除 `PageProperty(page)`；
+   * 返回分配的页指针。
+
+该过程即完成 **最佳适配分配**。
+
+---
+
+### （4）页面释放：`best_fit_free_pages`
+
+```c
+static void best_fit_free_pages(struct Page *base, size_t n)
+```
+
+主要步骤：
+
+1. 清空标志与引用计数；
+2. 标记 `base` 为新空闲块头，设置 `property = n`；
+3. 插入 `free_list`（保持物理地址有序）；
+4. 尝试**前后合并**相邻空闲块：
+
+   ```c
+   if (p + p->property == base) { /* 前向合并 */ }
+   if (base + base->property == p) { /* 后向合并 */ }
+   ```
+
+   合并时更新 `property`，删除被合并节点；
+5. 更新 `nr_free += n`。
+
+---
+
+## 二、物理内存分配与释放流程总结
+
+| 操作阶段   | 关键函数                     | 功能说明                        |
+| ------ | ------------------------ | --------------------------- |
+| 初始化    | `best_fit_init`          | 清空空闲链表与计数器                  |
+| 建立空闲块  | `best_fit_init_memmap`   | 将连续物理页初始化为空闲块并插入链表          |
+| 分配内存   | `best_fit_alloc_pages`   | 遍历链表，选择最小满足条件的空闲块进行分配（最佳适配） |
+| 释放内存   | `best_fit_free_pages`    | 将释放页重新插入空闲链表并尝试合并相邻空闲块      |
+| 查询空闲页数 | `best_fit_nr_free_pages` | 返回当前剩余空闲页数                  |
+
+---
+
+## 三、Best-Fit算法的特点与改进空间
+
+### 优点：
+
+* 相比 `First-Fit`，**更节省空间**，减少大块空闲内存被切碎；
+* 有助于**降低外部碎片率**。
+
+### 缺点：
+
+1. **时间复杂度高**：每次分配都需要遍历整个链表；
+2. **碎片分布不稳定**：频繁的小块分配与释放可能导致很多极小碎片；
+3. **不易缓存**：不像 `First-Fit` 可以记住上次分配位置，Best-Fit 每次都要全表扫描。
+
+---
+
+### 改进方向：
+
+1. **增加空闲块排序结构**
+
+   * 使用**平衡树（如红黑树）**或**最小堆**按块大小排序；
+   * 分配时可在 `O(log n)` 时间找到最小合适块；
+   * 释放时维护平衡树结构，提升整体效率。
+
+2. **改进空闲块合并策略**
+
+   * 采用**延迟合并**或**伙伴系统（Buddy System）**减少频繁操作；
+   * 合并时维护双向指针以减少链表遍历。
+
+3. **分级空闲表（Segregated Free Lists）**
+
+   * 按块大小分类管理（如 4KB、8KB、16KB...），分配时直接查对应链表；
+   * 常用于现代操作系统的 slab/slub 分配器中。
+
+---
+
+## 四、总结段
+
+> 在本实验中，基于 `kern/mm/default_pmm.c` 的 First-Fit 实现，编写了 Best-Fit 物理内存分配算法。
+> 其主要思路是：遍历整个空闲页链表，找出能够满足所需页数且块大小最小的空闲区进行分配。
+> 在分配后若剩余空间仍有页，则将剩余部分重新挂回空闲链表；释放时则通过合并相邻空闲块以减少碎片。
+> 该算法相比 First-Fit 能更好地利用空间，但在时间效率上存在不足。后续可通过引入平衡树结构或分级空闲表来优化查找效率和碎片管理。
+
+---
