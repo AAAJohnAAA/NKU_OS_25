@@ -357,8 +357,44 @@ static void best_fit_free_pages(struct Page *base, size_t n)
    * 常用于现代操作系统的 slab/slub 分配器中。
 
 ---
+## 四、实验结果
+见'.score'：
+```
+Check PMM:               (2.3s)
+  -check pmm:                                OK
+  -check page table:                         OK
+  -check ticks:                              OK
+Total Score: 50/50
+```
+###  具体含义
 
-## 四、总结段
+| 检查项                    | 含义                                               | 结果       |
+| ---------------------- | ------------------------------------------------ | -------- |
+| **check pmm**          | 检查你的物理内存分配器是否正确（`alloc` / `free` / `coalesce`逻辑） | OK      |
+| **check page table**   | 检查页表映射、页框管理逻辑是否正确                                | OK     |
+| **check ticks**        | 检查系统时钟中断与计数逻辑                                    | OK      |
+| **Total Score: 50/50** | 实验要求的全部功能点均正确实现                                  |  满分  |
+
+---
+
+### 说明
+
+这说明：
+
+* `best_fit_alloc_pages()` 分配逻辑；
+* `best_fit_free_pages()` 回收与合并逻辑；
+* `best_fit_init_memmap()` 初始化逻辑；
+
+都与内核测试的期望结果完全一致，
+证明你的 **Best-Fit 物理内存管理算法实现是完全正确的**。
+
+---
+
+> 实验结果表明，所实现的 Best-Fit 内存分配算法功能正确，通过了全部自动化测试项，达到了实验要求。
+
+---
+
+## 五、总结段
 
 > 在本实验中，基于 `kern/mm/default_pmm.c` 的 First-Fit 实现，编写了 Best-Fit 物理内存分配算法。
 > 其主要思路是：遍历整个空闲页链表，找出能够满足所需页数且块大小最小的空闲区进行分配。
