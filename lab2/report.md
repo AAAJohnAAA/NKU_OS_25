@@ -360,7 +360,7 @@ static void best_fit_free_pages(struct Page *base, size_t n)
 
 ## 四、总结段
 
-> 在本实验中，我基于 `kern/mm/default_pmm.c` 的 First-Fit 实现，编写了 Best-Fit 物理内存分配算法。
+> 在本实验中，基于 `kern/mm/default_pmm.c` 的 First-Fit 实现，编写了 Best-Fit 物理内存分配算法。
 > 其主要思路是：遍历整个空闲页链表，找出能够满足所需页数且块大小最小的空闲区进行分配。
 > 在分配后若剩余空间仍有页，则将剩余部分重新挂回空闲链表；释放时则通过合并相邻空闲块以减少碎片。
 > 该算法相比 First-Fit 能更好地利用空间，但在时间效率上存在不足。后续可通过引入平衡树结构或分级空闲表来优化查找效率和碎片管理。
