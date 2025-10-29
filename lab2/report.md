@@ -358,36 +358,19 @@ static void best_fit_free_pages(struct Page *base, size_t n)
 
 ---
 ## 四、实验结果
-见'.score'：
 ```
-Check PMM:               (2.3s)
-  -check pmm:                                OK
-  -check page table:                         OK
-  -check ticks:                              OK
-Total Score: 50/50
+root@John:/home/john/john_libr/os/lab2# make grade
+>>>>>>>>>> here_make>>>>>>>>>>>
+gmake[1]: Entering directory '/home/john/john_libr/os/lab2' + cc kern/init/entry.S + cc kern/init/init.c + cc kern/libs/stdio.c + cc kern/debug/panic.c + cc kern/driver/console.c + cc kern/driver/dtb.c + cc kern/mm/best_fit_pmm.c + cc kern/mm/default_pmm.c + cc kern/mm/pmm.c + cc libs/printfmt.c + cc libs/readline.c + cc libs/sbi.c + cc libs/string.c + ld bin/kernel riscv64-unknown-elf-objcopy bin/kernel --strip-all -O binary bin/ucore.img gmake[1]: Leaving directory '/home/john/john_libr/os/lab2'
+>>>>>>>>>> here_make>>>>>>>>>>>
+<<<<<<<<<<<<<<< here_run_qemu <<<<<<<<<<<<<<<<<<
+try to run qemu
+qemu pid=22879
+<<<<<<<<<<<<<<< here_run_check <<<<<<<<<<<<<<<<<<
+  -check physical_memory_map_information:    OK
+  -check_best_fit:                           OK
+Total Score: 25/25
 ```
-###  具体含义
-
-| 检查项                    | 含义                                               | 结果       |
-| ---------------------- | ------------------------------------------------ | -------- |
-| **check pmm**          | 检查你的物理内存分配器是否正确（`alloc` / `free` / `coalesce`逻辑） | OK      |
-| **check page table**   | 检查页表映射、页框管理逻辑是否正确                                | OK     |
-| **check ticks**        | 检查系统时钟中断与计数逻辑                                    | OK      |
-| **Total Score: 50/50** | 实验要求的全部功能点均正确实现                                  |  满分  |
-
----
-
-### 说明
-
-这说明：
-
-* `best_fit_alloc_pages()` 分配逻辑；
-* `best_fit_free_pages()` 回收与合并逻辑；
-* `best_fit_init_memmap()` 初始化逻辑；
-
-都与内核测试的期望结果完全一致，
-证明你的 **Best-Fit 物理内存管理算法实现是完全正确的**。
-
 ---
 
 > 实验结果表明，所实现的 Best-Fit 内存分配算法功能正确，通过了全部自动化测试项，达到了实验要求。
@@ -402,3 +385,49 @@ Total Score: 50/50
 > 该算法相比 First-Fit 能更好地利用空间，但在时间效率上存在不足。后续可通过引入平衡树结构或分级空闲表来优化查找效率和碎片管理。
 
 ---
+
+# 调试过程以及结果
+
+进入lab2文件夹。
+输入
+```
+make qemu
+```
+
+显示如下：
+
+```
+(THU.CST) os is loading ...
+Special kernel symbols:
+  entry  0xffffffffc02000d8 (virtual)
+  etext  0xffffffffc0201662 (virtual)
+  edata  0xffffffffc0205018 (virtual)
+  end    0xffffffffc0205078 (virtual)
+Kernel executable memory footprint: 20KB
+memory management: best_fit_pmm_manager
+physcial memory map:
+  memory: 0x0000000008000000, [0x0000000080000000, 0x0000000087ffffff].
+check_alloc_page() succeeded!
+satp virtual address: 0xffffffffc0204000
+satp physical address: 0x0000000080204000
+
+```
+
+改pmm.c中default_pmm_manager为best_fit_pmm_manager，输入
+```
+make grade
+```
+输出：
+```
+root@John:/home/john/john_libr/os/lab2# make grade
+>>>>>>>>>> here_make>>>>>>>>>>>
+gmake[1]: Entering directory '/home/john/john_libr/os/lab2' + cc kern/init/entry.S + cc kern/init/init.c + cc kern/libs/stdio.c + cc kern/debug/panic.c + cc kern/driver/console.c + cc kern/driver/dtb.c + cc kern/mm/best_fit_pmm.c + cc kern/mm/default_pmm.c + cc kern/mm/pmm.c + cc libs/printfmt.c + cc libs/readline.c + cc libs/sbi.c + cc libs/string.c + ld bin/kernel riscv64-unknown-elf-objcopy bin/kernel --strip-all -O binary bin/ucore.img gmake[1]: Leaving directory '/home/john/john_libr/os/lab2'
+>>>>>>>>>> here_make>>>>>>>>>>>
+<<<<<<<<<<<<<<< here_run_qemu <<<<<<<<<<<<<<<<<<
+try to run qemu
+qemu pid=22879
+<<<<<<<<<<<<<<< here_run_check <<<<<<<<<<<<<<<<<<
+  -check physical_memory_map_information:    OK
+  -check_best_fit:                           OK
+Total Score: 25/25
+```
