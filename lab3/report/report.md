@@ -137,3 +137,91 @@ RISC-V 的中断和异常统称为 **Trap（陷入）**。
 ![alt text](pic/1.png)
 
 这段输出结果表明你的 **时钟中断处理机制已经正确实现**。系统启动信息显示 OpenSBI 成功加载并初始化了 RISC-V 虚拟平台（QEMU Virt Machine），完成了物理内存映射与内核加载。当执行到 `++ setup timer interrupts` 时，说明内核已设置好时钟中断处理函数。随后连续输出的 **“100 ticks”** 表示系统在每发生 100 次时钟中断后执行了 `print_ticks()` 函数进行打印。共打印 10 次后系统自动调用 `sbi_shutdown()` 关机，验证了中断响应、上下文保存与恢复、计时与条件判断等功能均正确无误，整个中断处理流程实现完全符合实验要求。
+
+# 附加题
+
+## Challenge1：描述与理解中断流程
+
+在 **ucore** 中，中断或异常的处理流程如下：
+
+1. **异常产生阶段**：当 CPU 执行过程中遇到异常（如非法指令、断点）或中断（如时钟中断）时，硬件会自动保存当前的 **PC（sepc）**、异常原因（scause）和出错地址（stval）到相应的 CSR 寄存器中，并切换到内核态，跳转至 **trap entry（入口点）** 执行。
+
+2. **进入中断入口**：程序跳转至 `__alltraps` 汇编入口。此时需要保存当前上下文，以防被中断的进程状态丢失。
+
+3. **保存上下文环境（SAVE_ALL）**：  
+   指令 `mov a0, sp` 的作用是 **将当前栈指针 sp 的值传递给 a0 寄存器**，以便 C 语言函数（如 `trap()`）可以通过参数访问中断帧（TrapFrame）的位置。  
+   在 `SAVE_ALL` 宏中，寄存器的保存顺序是**人为固定的**，由 `trapframe` 结构体在内存中的布局决定，保证保存与恢复的顺序一致。每个寄存器都被存储到栈中的固定偏移处，以实现正确的恢复。
+
+4. **调用内核C函数处理**：  
+   汇编完成上下文保存后，跳转至 `trap()` 函数（在 `trap.c` 中实现）。该函数会根据 `scause` 的内容判断中断或异常类型，并调用对应的处理函数。
+
+5. **中断返回与恢复上下文（RESTORE_ALL）**：  
+   处理完毕后，通过 `RESTORE_ALL` 从栈中按相反顺序恢复所有寄存器的值，并用 `sret` 指令返回用户态或之前的执行点。
+
+**是否所有中断都需要在 `__alltraps` 中保存所有寄存器？**  
+是的，需要保存所有寄存器。因为在中断发生时，系统并不知道是哪种中断或异常（可能打断任何程序执行），保存全部寄存器可以保证**上下文完整性**，防止寄存器被破坏导致系统状态不一致。尽管某些中断只使用少量寄存器，但统一保存可以简化设计并增强健壮性。
+
+---
+
+## Challenge2：理解上下文切换机制
+
+在 `trapentry.S` 中：
+
+```asm
+csrw sscratch, sp
+csrrw s0, sscratch, x0
+````
+
+这两条指令的含义与目的如下：
+
+* `csrw sscratch, sp`：将当前的 **内核栈指针 sp** 保存到 **sscratch 寄存器** 中。
+  这一步的目的是暂存当前栈指针，以便在中断上下文切换时能重新取回正确的栈基地址。
+
+* `csrrw s0, sscratch, x0`：将 **sscratch 的内容读取到 s0**，同时清空 sscratch。
+  这样做是为了在陷入内核前获取之前保存的栈指针（sp）信息，用于后续保存上下文或切换栈。
+
+---
+
+**为什么 `SAVE_ALL` 中保存了 `stval`、`scause` 等 CSR，而在 `RESTORE_ALL` 中却不还原它们？**
+
+这是因为：
+
+* `stval`（异常相关地址）、`scause`（异常原因）和 `sepc` 等 CSR 仅在当前中断期间有意义。
+* 它们在返回用户态或内核其他流程时会被新的中断自动覆盖，不需要人工恢复。
+* 保存它们的目的仅仅是为了 **C 语言中断处理函数能够读取异常原因和地址信息**，进行判断和输出调试。
+
+因此，store 的意义在于“读取”和“分析”，而非恢复。
+
+
+## Challenge3：完善异常中断
+
+通过在 `kern/trap/trap.c` 的异常处理函数中添加对 **非法指令异常** 与 **断点异常** 的处理逻辑，系统可以在异常发生时输出相应信息。例如：
+
+```c
+case CAUSE_ILLEGAL_INSTRUCTION:
+    cprintf("Illegal instruction caught at 0x%lx\n", tf->epc);
+    cprintf("Exception type: Illegal instruction\n");
+    break;
+case CAUSE_BREAKPOINT:
+    cprintf("ebreak caught at 0x%lx\n", tf->epc);
+    cprintf("Exception type: breakpoint\n");
+    break;
+```
+
+当执行到非法指令或 `ebreak` 指令时，系统会：
+
+1. 触发异常并跳转至 `__alltraps`。
+2. 保存寄存器上下文并调用 `trap()`。
+3. 根据 `scause` 判断异常类型并打印异常信息。
+4. 若处理完成，恢复上下文并返回继续执行。
+
+最终输出示例：
+
+```
+Illegal instruction caught at 0xffffffffc02012ac
+Exception type: Illegal instruction
+ebreak caught at 0xffffffffc02012b4
+Exception type: breakpoint
+```
+
+这表明异常捕获与处理机制实现正确。
