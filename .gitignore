@@ -26,7 +26,6 @@ lab2/*.bin
 
 lab3/obj/
 lab3/bin/
-lab3/tools/
 lab3/ucore.img
 lab3/*.img
 lab3/*.bin
