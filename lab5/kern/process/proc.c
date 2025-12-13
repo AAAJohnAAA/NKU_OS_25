@@ -512,10 +512,12 @@ int do_exit(int error_code)
     local_intr_save(intr_flag);
     {
         proc = current->parent;
-        if (proc->wait_state == WT_CHILD)
-        {
-            wakeup_proc(proc);
-        }
+        
+        // 修改这里：总是唤醒父进程
+        // 原代码：if (proc->wait_state == WT_CHILD) { wakeup_proc(proc); }
+        // 新代码：
+        wakeup_proc(proc);
+        
         while (current->cptr != NULL)
         {
             proc = current->cptr;
