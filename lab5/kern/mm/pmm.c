@@ -404,23 +404,32 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,bool share
              * (3) memory copy from src_kvaddr to dst_kvaddr, size is PGSIZE
              * (4) build the map of phy addr of  nage with the linear addr start
              */
-            if (share)
-            {
+            // 提取共同操作
+            struct Page *target_page;
+            int page_insert_ret;
+
+            if (share) {
                 *ptep = (*ptep & ~PTE_W) | PTE_W;
                 perm = (perm & ~PTE_W) | PTE_W;
-                ret = page_insert(to, page, start, perm);
+                
+                target_page = page;
+                page_insert_ret = page_insert(to, target_page, start, perm);
+                
                 tlb_invalidate(from, start);
-            }
-            else
-            {
+            } else {
                 struct Page *npage = alloc_page();
                 assert(npage != NULL);
+                
                 void *src_kvaddr = page2kva(page);
                 void *dst_kvaddr = page2kva(npage);
                 memcpy(dst_kvaddr, src_kvaddr, PGSIZE);
-                ret = page_insert(to, npage, start, perm);
+                
+                target_page = npage;
+                page_insert_ret = page_insert(to, target_page, start, perm);
             }
-            assert(ret == 0);
+
+            // 统一检查结果
+            assert(page_insert_ret == 0);
         }
         start += PGSIZE;
     } while (start != 0 && start < end);
