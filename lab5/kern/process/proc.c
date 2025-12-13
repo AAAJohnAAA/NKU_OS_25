@@ -116,7 +116,7 @@ alloc_proc(void)
         proc->tf = NULL;                                // 中断帧指针为空
         proc->pgdir = boot_pgdir_pa;                    // 页目录表设为内核页目录表的基址
         proc->flags = 0;                                // 标志位为0
-        memset(proc->name, 0, PROC_NAME_LEN + 1);       // 进程名清零
+        memset(proc->name, 0, PROC_NAME_LEN + 1);
         list_init(&(proc->list_link));
         list_init(&(proc->hash_link));
 
