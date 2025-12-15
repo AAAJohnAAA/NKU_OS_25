@@ -409,6 +409,181 @@ void page_remove(pde_t *pgdir, uintptr_t la) {
 
 ---
 
+## GDB 调试
+
+### 在 syscall 处打断点
+
+![alt text](image.png)
+
+- b kern_entry: 
+- - 在符号 kern_entry 处下断点。GDB 显示 Breakpoint 1 at 0xffffffffc0200000: file kern/init/entry.S, line 10.，表示已解析到源文件与行号，并给出该断点对应的虚拟地址 0xffffffffc0200000（内核高地址映射下的入口地址）。
+- b user/libs/syscall.c:26:
+- -  GDB 报错 No source file named user/libs/syscall.c.，说明当前加载的符号信息里没有这一路径/源文件（常见原因：用户态程序未以带符号的方式被 GDB “认识”、路径不在 debug info 中、或被按原始二进制嵌入）。随后提示 <future shared library load? (y or [n])>，你选了 y，于是断点变为 “pending”（待解析）：GDB 会在未来有新目标/模块加载时尝试把这个断点绑定到真正的代码位置。在这种裸机 OS 环境里，用户态程序通常不会以“共享库”形式被 GDB 自动加载，因此这个 pending 断点很可能一直不生效。
+- b syscall: 
+- - 在内核函数 syscall 处下断点。GDB 显示 Breakpoint 3 at 0xffffffffc0205180: file kern/syscall/syscall.c, line 83.，表明已成功解析到内核源文件和具体行号，并给出对应的指令地址。这个是内核侧的系统调用分发入口，不是用户态的 syscall 封装。
+
+*也就是说，直接给syscall打断点，是在内核侧的系统调用处理函数处打断点，而不是在用户态的 syscall 封装函数处打断点。*
+
+## 内核如何嵌入/加载用户程序
+
+1. 嵌入方式: Makefile 用 ld --format=binary $(USER_BINS) 把用户程序的二进制作为原始数据嵌入到 bin/kernel 中。这样在内核 ELF 里会生成符号形如 _binary_<路径>_start/_end/_size（本项目中前缀为 _binary_obj___user_<name>_out_*），用于在运行时定位这段嵌入的二进制数据。
+2. 链接产物: 用户程序先用 tools/user.ld 链接生成 ELF（例如 __user_<prog>.out），随后“以二进制”形式被打包进内核。内核在执行 exec/load_icode 类函数时会解析这个用户 ELF并把它的各段映射到用户地址空间（.text/.data/.bss 等各自的虚拟地址由 tools/user.ld 与加载逻辑共同决定）。
+
+要对用户态调试，需在 GDB 中手动 add-symbol-file 用户程序的 ELF（带符号）并提供它在用户空间的加载地址。
+
+## 调试用户态源码
+
+在 GDB 中手动 add-symbol-file 用户程序的 ELF（带符号）并提供它在用户空间的加载地址
+
+1. 启动调试（一个终端跑 QEMU，另一个终端连 GDB）
+
+2. 在 GDB 中设置源码目录与断点位置（用户程序加载/切换到用户态前）
+
+```gdb
+(gdb) set breakpoint pending on
+(gdb) dir user
+(gdb) b load_icode         # 或者 b do_execve / b proc_run 等加载/切换点
+(gdb) c
+```
+
+3. 当命中加载点后，获取用户程序在用户空间的各段地址（例如 text_base/data_base/bss_base；可以在加载函数里打印或用 GDB p/x 查看内核记录的值）。
+用真实的用户 ELF（带符号的 __user_<prog>.out）加载符号，填入相应地址：
+
+```gdb
+(gdb) add-symbol-file obj/.../__user_<prog>.out 0xTEXT_BASE -s .data 0xDATA_BASE -s .bss 0xBSS_BASE
+(gdb) b user/libs/syscall.c:26        # 现在此类断点可解析
+(gdb) c
+```
+
+如果暂时拿不到各段地址，可先只用 .text 基址加载：
+
+```gdb
+(gdb) add-symbol-file obj/.../__user_<prog>.out 0xTEXT_BASE
+```
+
+## 对 ecall 和 sret 调试并理解
+
+从前面知道：add-symbol-file obj/__user_exit.out
+user.ld 已经定义了它是静态链接到 0x800020 的，GDB 会自动从 ELF 头中读取这个地址。
+
+接着给 syscall 打断点
+
+```gdb
+(gdb) add-symbol-file obj/__user_exit.out
+add symbol table from file "obj/__user_exit.out"
+(y or n) y
+Reading symbols from obj/__user_exit.out...
+(gdb) break user/libs/syscall.c:18
+Breakpoint 1 at 0x8000f8: file user/libs/syscall.c, line 19.
+```
+
+找到ecall
+![alt text](image-1.png)
+可以看到目前在 syscall断点处，pc 指令 位于0x8000f8	0x8000f8 <syscall+32>
+
+用 x/10i $pc 查看接下来的指令
+找到了 ecall 指令
+
+接下来使用 si 命令单步执行 ecall 指令
+
+根据大模型建议：
+
+- 打开指令级调试和自动反汇编：
+
+```gdb
+(gdb) set disassemble-next-line on
+(gdb) display/i $pc
+```
+
+- 展示关键 CSR（自动显示）：
+
+```gdb
+(gdb) display/x $sstatus
+(gdb) display/x $sepc
+(gdb) display/x $scause
+(gdb) display/x $stval
+(gdb) display/x $stvec
+(gdb) display/x $sscratch
+```
+
+- 方便 pending 断点：
+
+```gdb
+(gdb) set breakpoint pending on
+```
+
+可以先看看执行ecall前：
+
+![alt text](image-2.png)
+
+执行后，进入 __alltraps ()， 可以清晰的看到此时CSR的状态
+
+![alt text](image-3.png)
+
+从 scause=0x8 可知，此时确实是用户态 ecall 
+sepc=0x800104 指向你之前的 ecall 指令地址；stval=0 为常见情况。
+stvec=0xffffffffc0200e50 且 pc=stvec+4，说明在 vectored 模式下异常向量入口位于 BASE+4*ecode，此处 ecode=8 对应 BASE+32，指令对齐导致看到的是入口处的第 2 条指令。
+入口汇编 SAVE_ALL 正在构建 trapframe：依次把所有通用寄存器与关键 CSR 保存到 S 态栈中，然后跳到 C 层的陷入处理函数。
+
+也可以看到 __alltraps () 的汇编指令
+![alt text](image-4.png)
+
+### 逐条解释 ecall
+
+- csrrw sp, sscratch, sp：
+- - 用当前 sp 与 sscratch 交换。常用于从用户态切换到 S 态栈：用户态时 sscratch 事先存放内核栈指针，交换后 sp 变成 S 态栈顶，而旧的用户态 sp 暂存在 sscratch 里。
+- bnez sp, __alltraps+12；随后 csrr sp, sscratch：
+- - 如果交换后 sp 非零（已有 S 态栈），则跳过下一条；否则（例如首次进入或某些路径）从 sscratch 读出一个备用栈指针到 sp。你当前 sscratch=0x7fffff40，可用于保存用户态 sp 或提供 S 态栈地址。
+- addi sp, sp, -288：
+- - 在 S 态栈上分配 288 字节的 trapframe 空间。
+- sd ... 一系列保存：
+- - 依次保存 zero, ra, gp, tp, t0..t6, s0..s11, a0..a7 到栈上各偏移，构建完整的寄存器现场。
+- csrrw s0, sscratch, zero：
+- - 把当前 sscratch 值读到 s0，并把 sscratch 写零。通常 s0 被用来暂存用户态栈指针或相关信息。
+- csrr s1, sstatus；csrr s2, sepc；csrr s3, stval；csrr s4, scause：
+- - 读取关键 CSR：
+- - - sstatus=0x8000000000046020：位域包含 SPP（保存的前态）、SPIE/SIE 等；你可据此判断返回到 U 态还是 S 态（SPP=0 表示返回到 U 态）。
+- - - sepc=0x800104：返回点为触发 ecall 的指令地址（你的反汇编中 0x800104: ecall）。
+- - - stval=0：ecall 常为 0。
+- - - scause=0x8：用户态 ecall 异常码，确认来自 U 态。
+- 将 s0..s4 和 sstatus/sepc/stval/scause写回栈：
+- - sd s0,16(sp)；sd s1,256(sp)；sd s2,264(sp)；sd s3,272(sp)；sd s4,280(sp)：
+- - 这意味着 trapframe 的固定布局中，偏移 256/264/272/280 分别保存 sstatus/sepc/stval/scause，后续 C 代码通过该布局读取。
+
+scause=0x8：用户态的 ecall。
+sepc=0x800104：返回点在 ecall 指令处；当处理完毕，sret 会跳回这里（通常返回到下一条指令，处理代码会调整 sepc 指向 ecall 的下一条）。
+stvec=0xffffffffc0200e50：陷入向量基址。你的 pc=0xffffffffc0200e54 正好是 BASE+4*8+4 附近，对齐与宏展开让第一条显示为 bnez；本质为 ecall 的向量入口。
+sstatus=...：检查 SPP 位可确认从 U→S 的切换；SPIE/SIE 位的进位/还原将在 sret 前后体现。
+
+### 逐条解释 sret
+
+此时可以给 sret 断点： 
+
+```gdb
+(gdb) b __trapret 
+Breakpoint 2 at 0xffffffffc0200ec0: file kern/trap/trapentry.S, line 131.
+(gdb) c
+Continuing.
+```
+
+![alt text](image-5.png)
+
+*这是异常返回路径的汇编序列 RESTORE_ALL，作用是从 trapframe 中恢复寄存器与关键 CSR，然后执行 sret 返回到 sepc*
+
+- 开头两条：
+- - ld s1,256(sp)：取出保存的 sstatus 到 s1（之前在 __alltraps 中把 sstatus 存在 sp+256）。
+- - ld s2,264(sp)：取出保存的 sepc 到 s2（在 sp+264）。
+- andi s0,s1,256 + bnez s0,...：
+- - 取 sstatus 的 SPP 位（在 RISC-V S 态，SPP 位用于记录前态用户/监督），如果 SPP=1（前态是 S 态），走分支；否则（前态 U 态）会设置 sscratch 为当前 trapframe 末尾地址，以便返回后用户态用到。
+- csrw sstatus,s1 和 csrw sepc,s2：
+- - 把恢复出来的 sstatus/sepc 写回 CSR，为 sret 做准备。
+- 后续 ld：
+- - 依次恢复所有通用寄存器到原值。
+- ld sp,16(sp)：
+- - 恢复 sp 为陷入前保存的值（sp+16 位置在前面 __alltraps 里存了 sscratch/栈指针相关信息）。
+
+![alt text](image-6.png)
+
 ## 实验知识点总结
 
 ### 本实验的重要知识点
