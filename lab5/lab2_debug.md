@@ -110,8 +110,8 @@
 6.  **触发**: 现在，QEMU 已经准备就绪，并且断点已经激活。我们可以在 ucore GDB（终端 3）中执行代码，任何触发地址翻译的操作都会被 QEMU GDB 捕获。
 
 ## 4. 执行过程
-![alt text](image dg2.png)
-![alt text](image dg3.png)
+![alt text](<image dg2.png>)
+![alt text](<image dg3.png>)
 1.  **启动 QEMU**:
     ```bash
     # 终端 1
@@ -165,8 +165,10 @@
     ```
 
 ## 5. 结果分析
-![alt text](image dg1.png)
-![alt text](image dg4.png)
+
+![alt text](<image dg1.png>)
+
+![alt text](<image dg4.png>)
 当 QEMU GDB 的断点命中时，我们可以检查 `get_physical_address` 函数的参数和内部变量，从而窥探页表查询的全过程。
 
 - **`vaddr`**: `4294971384` (即 `0x100000ff8`)，这就是 ucore 尝试写入的虚拟地址 `sp+8`。
