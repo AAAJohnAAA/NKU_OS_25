@@ -588,19 +588,70 @@ sfs_io_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, void *buf, off_t offset
     uint32_t ino;
     uint32_t blkno = offset / SFS_BLKSIZE;          // The NO. of Rd/Wr begin block
     uint32_t nblks = endpos / SFS_BLKSIZE - blkno;  // The size of Rd/Wr blocks
+    off_t blkoff = offset % SFS_BLKSIZE;            // The offset in the first block
 
   //LAB8:EXERCISE1 YOUR CODE HINT: call sfs_bmap_load_nolock, sfs_rbuf, sfs_rblock,etc. read different kind of blocks in file
 	/*
 	 * (1) If offset isn't aligned with the first block, Rd/Wr some content from offset to the end of the first block
 	 *       NOTICE: useful function: sfs_bmap_load_nolock, sfs_buf_op
 	 *               Rd/Wr size = (nblks != 0) ? (SFS_BLKSIZE - blkoff) : (endpos - offset)
-	 * (2) Rd/Wr aligned blocks 
+	 * (2) Rd/Wr aligned blocks
 	 *       NOTICE: useful function: sfs_bmap_load_nolock, sfs_block_op
      * (3) If end position isn't aligned with the last block, Rd/Wr some content from begin to the (endpos % SFS_BLKSIZE) of the last block
-	 *       NOTICE: useful function: sfs_bmap_load_nolock, sfs_buf_op	
-	*/
+	 *       NOTICE: useful function: sfs_bmap_load_nolock, sfs_buf_op
+	 */
 
-    
+    // (1) If offset isn't aligned with the first block, Rd/Wr some content from offset to the end of the first block
+    if (blkoff != 0) {
+        // 计算需要读写的字节数：如果有完整块，则读到块尾；否则读到结束位置
+        size = (nblks != 0) ? (SFS_BLKSIZE - blkoff) : (endpos - offset);
+        // 获取文件逻辑块 blkno 对应的磁盘物理块号
+        if ((ret = sfs_bmap_load_nolock(sfs, sin, blkno, &ino)) != 0) {
+            goto out;
+        }
+        // 从磁盘块的 blkoff 偏移处开始读写 size 字节（非块对齐的读写）
+        if ((ret = sfs_buf_op(sfs, buf, size, ino, blkoff)) != 0) {
+            goto out;
+        }
+        alen += size;     // 累加已读写的字节数
+        buf += size;      // 移动缓冲区指针
+        blkno ++;         // 移动到下一个逻辑块
+        nblks --;         // 剩余完整块数减1
+    }
+
+    // (2) Rd/Wr aligned blocks - 读写中间的完整块
+    if (nblks != 0) {
+        size = nblks * SFS_BLKSIZE;
+        // 逐个读取完整块，因为文件的逻辑块在磁盘上可能不连续
+        uint32_t curblkno = blkno;
+        for (uint32_t i = 0; i < nblks; i++) {
+            // 获取当前逻辑块对应的磁盘物理块号
+            if ((ret = sfs_bmap_load_nolock(sfs, sin, curblkno, &ino)) != 0) {
+                goto out;
+            }
+            // 读写一个完整的块（4KB）
+            if ((ret = sfs_block_op(sfs, buf, ino, 1)) != 0) {
+                goto out;
+            }
+            buf += SFS_BLKSIZE;    // 缓冲区指针移动一个块大小
+            curblkno ++;           // 移动到下一个逻辑块
+        }
+        alen += size;        // 累加已读写的字节数
+        blkno += nblks;      // 更新当前块号
+    }
+
+    // (3) If end position isn't aligned with the last block, Rd/Wr some content from begin to the (endpos % SFS_BLKSIZE) of the last block
+    if ((size = endpos % SFS_BLKSIZE) != 0) {
+        // 获取最后一个逻辑块对应的磁盘物理块号
+        if ((ret = sfs_bmap_load_nolock(sfs, sin, blkno, &ino)) != 0) {
+            goto out;
+        }
+        // 从磁盘块开始处读写 size 字节（最后一块的部分数据）
+        if ((ret = sfs_buf_op(sfs, buf, size, ino, 0)) != 0) {
+            goto out;
+        }
+        alen += size;     // 累加已读写的字节数
+    }
 
 out:
     *alenp = alen;
