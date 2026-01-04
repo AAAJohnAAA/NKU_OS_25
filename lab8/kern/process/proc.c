@@ -776,10 +776,7 @@ load_icode(int fd, int argc, char **kargv)
             ret = -E_INVAL_ELF;
             goto bad_cleanup_mmap;
         }
-        if (ph->p_filesz == 0)
-        {
-            continue;
-        }
+        // 不要跳过 filesz == 0 的段，因为 BSS 段可能有 memsz > 0
 
         vm_flags = 0, perm = PTE_U | PTE_V;
         if (ph->p_flags & ELF_PF_X)
@@ -817,6 +814,7 @@ load_icode(int fd, int argc, char **kargv)
             {
                 goto bad_cleanup_mmap;
             }
+
             off = start - la, size = PGSIZE - off, la += PGSIZE;
             if (end < la)
             {
@@ -832,34 +830,28 @@ load_icode(int fd, int argc, char **kargv)
 
         // (3.5) call pgdir_alloc_page to allocate pages for BSS, memset zero in these pages
         end = ph->p_va + ph->p_memsz;
-        if (start < la)
-        {
-            if (start == end)
-            {
-                continue;
-            }
-            off = start + PGSIZE - la, size = PGSIZE - off;
-            if (end < la)
-            {
-                size -= la - end;
-            }
-            memset(page2kva(page) + off, 0, size);
-            start += size;
-            assert((end < la && start == end) || (end >= la && start == la));
-        }
+        // 处理 BSS 部分：从 p_filesz 到 p_memsz 的区域需要清零
+        // 重新对齐 la 到当前 start 的页面边界
+        la = ROUNDDOWN(start, PGSIZE);
         while (start < end)
         {
-            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL)
+            if (start >= la)
             {
-                goto bad_cleanup_mmap;
+                // 需要分配新页面
+                if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL)
+                {
+                    goto bad_cleanup_mmap;
+                }
             }
-            off = start - la, size = PGSIZE - off, la += PGSIZE;
-            if (end < la)
+            off = start - la, size = PGSIZE - off;
+            // 计算实际需要清零的大小
+            if (end < la + PGSIZE)
             {
-                size -= la - end;
+                size = end - start;
             }
             memset(page2kva(page) + off, 0, size);
             start += size;
+            la += PGSIZE;
         }
     }
 
@@ -872,32 +864,55 @@ load_icode(int fd, int argc, char **kargv)
     {
         goto bad_cleanup_mmap;
     }
-    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - PGSIZE, PTE_USER) != NULL);
-    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - 2 * PGSIZE, PTE_USER) != NULL);
-    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - 3 * PGSIZE, PTE_USER) != NULL);
-    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - 4 * PGSIZE, PTE_USER) != NULL);
+    // 为用户栈分配页面（分配全部256个页面以确保栈空间足够）
+    // 使用正确的权限（只读可写，不需要执行权限）
+    // 保存第一个栈页面的指针，用于设置参数
+    struct Page *first_stack_page = NULL;
+    for (int i = 1; i <= USTACKPAGE; i++)
+    {
+        struct Page *p = pgdir_alloc_page(mm->pgdir, USTACKTOP - i * PGSIZE, PTE_U | PTE_W | PTE_R | PTE_V);
+        if (p == NULL)
+        {
+            // 如果分配失败，至少保证顶部有足够的页面
+            cprintf("Warning: failed to allocate full user stack, allocated %d pages\n", i - 1);
+            break;
+        }
+        if (i == 1)
+        {
+            first_stack_page = p;
+        }
+    }
 
     // (5) setup current process's mm, cr3, reset pgidr (using lsatp MARCO)
     mm_count_inc(mm);
     current->mm = mm;
     current->pgdir = PADDR(mm->pgdir);
-    lsatp(PADDR(mm->pgdir));
 
     // (6) setup uargc and uargv in user stacks
-    uintptr_t argv_base = USTACKTOP - sizeof(uintptr_t);
-    // 保存 argc 和 argv 到用户栈
-    // 这里简化处理，实际实现可能需要更复杂的参数传递
+    // 当前正在使用boot_pgdir，通过内核虚拟地址写入用户栈
+    // first_stack_page对应的是USTACKTOP - PGSIZE到USTACKTOP的页面
+    uintptr_t esp = USTACKTOP;
+    // 通过内核虚拟地址写入栈顶
+    char *stack_kva = page2kva(first_stack_page) + PGSIZE;
+
+    // 压入 argc
+    stack_kva -= sizeof(int);
+    *(int *)stack_kva = argc;
+    esp -= sizeof(int);
 
     // (7) setup trapframe for user environment
     struct trapframe *tf = current->tf;
-    // Keep sstatus
-    uintptr_t sstatus = read_csr(sstatus);
-    memset(tf, 0, sizeof(struct trapframe));
 
-    tf->gpr.sp = USTACKTOP;
+    // 只清空通用寄存器，保留sstatus等关键寄存器
+    memset(&(tf->gpr), 0, sizeof(tf->gpr));
+
+    tf->gpr.sp = esp;
+    tf->gpr.a0 = argc;           // a0 = argc
+    tf->gpr.a1 = esp + sizeof(int);  // a1 = argv
     tf->epc = elf.e_entry;
     // 设置 sstatus 为用户模式：清除 SPP 位（表示从用户模式返回），设置 SPIE 位（使能中断）
-    tf->status = (sstatus & ~SSTATUS_SPP) | SSTATUS_SPIE;
+    // 保留其他重要位如SIE等
+    tf->status = (read_csr(sstatus) & ~SSTATUS_SPP) | SSTATUS_SPIE;
 
     ret = 0;
 out:
@@ -1025,6 +1040,14 @@ int do_execve(const char *name, int argc, const char **argv)
     }
     put_kargv(argc, kargv);
     set_proc_name(current, local_name);
+
+    // 切换到新进程的页表
+    if (current->mm != NULL)
+    {
+        lsatp(current->pgdir);
+        flush_tlb();
+    }
+
     return 0;
 
 execve_exit:
